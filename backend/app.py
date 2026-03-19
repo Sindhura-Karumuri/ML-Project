@@ -10,9 +10,9 @@ from PIL import Image
 import hashlib
 
 app = Flask(__name__)
-CORS(app, origins="*", supports_credentials=False)
+CORS(app, resources={r"/api/*": {"origins": "*"}})
 
-# Ensure CORS headers are present even on error responses
+# Ensure CORS headers on ALL responses including errors and OPTIONS
 @app.after_request
 def add_cors_headers(response):
     response.headers["Access-Control-Allow-Origin"] = "*"
@@ -20,11 +20,19 @@ def add_cors_headers(response):
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
     return response
 
+# Handle preflight OPTIONS requests for all routes
+@app.route("/api/<path:path>", methods=["OPTIONS"])
+def options_handler(path):
+    return jsonify({}), 200
+
 @app.errorhandler(Exception)
 def handle_exception(e):
     import traceback
     traceback.print_exc()
-    return jsonify({"success": False, "message": str(e)}), 500
+    response = jsonify({"success": False, "message": str(e)})
+    response.status_code = 500
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    return response
 
 # ── Paths (all relative to this file so they work on any server) ──
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -35,6 +43,19 @@ CONTACT_PATH  = os.path.join(BASE_DIR, "contact.json")
 HISTORY_PATH  = os.path.join(BASE_DIR, "history.json")
 
 _clf = None
+
+def _train_model():
+    """Train a lightweight Random Forest on Fashion MNIST via OpenML."""
+    from sklearn.ensemble import RandomForestClassifier
+    from sklearn.datasets import fetch_openml
+    print("[Model] Downloading Fashion-MNIST from OpenML...")
+    data = fetch_openml("Fashion-MNIST", version=1, as_frame=False, parser="auto")
+    X = data.data.astype(np.float32) / 255.0
+    y = data.target.astype(int)
+    print(f"[Model] Training on {len(X)} samples...")
+    clf = RandomForestClassifier(n_estimators=50, max_depth=20, n_jobs=-1, random_state=42)
+    clf.fit(X, y)
+    return clf
 
 def get_model():
     global _clf
@@ -55,19 +76,11 @@ def get_model():
                 _clf = None
     return _clf
 
-
-def _train_model():
-    """Train a lightweight Random Forest on Fashion MNIST via OpenML."""
-    from sklearn.ensemble import RandomForestClassifier
-    from sklearn.datasets import fetch_openml
-    print("[Model] Downloading Fashion-MNIST from OpenML...")
-    data = fetch_openml("Fashion-MNIST", version=1, as_frame=False, parser="auto")
-    X = data.data.astype(np.float32) / 255.0
-    y = data.target.astype(int)
-    print(f"[Model] Training on {len(X)} samples...")
-    clf = RandomForestClassifier(n_estimators=50, max_depth=20, n_jobs=-1, random_state=42)
-    clf.fit(X, y)
-    return clf
+# Load model at startup (not on first request) so it never blocks a request
+try:
+    get_model()
+except Exception as e:
+    print(f"[Startup] Model load failed: {e}")
 
 # ── User store (persisted to users.json) ──
 def load_users():
