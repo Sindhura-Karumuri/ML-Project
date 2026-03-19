@@ -10,6 +10,9 @@ venv/
 frontend/node_modules/
 frontend/dist/
 
+# Large model file (retrained on server startup)
+backend/model.pkl
+
 # Data files (regenerated at runtime)
 backend/users.json
 backend/feedback.json
