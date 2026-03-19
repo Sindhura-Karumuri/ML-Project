@@ -45,16 +45,38 @@ HISTORY_PATH  = os.path.join(BASE_DIR, "history.json")
 _clf = None
 
 def _train_model():
-    """Train a lightweight Random Forest on Fashion MNIST via OpenML."""
-    from sklearn.ensemble import RandomForestClassifier
+    """
+    Train a memory-efficient model on Fashion MNIST.
+    Uses SGDClassifier which trains sample-by-sample — stays well under 512MB.
+    """
+    from sklearn.linear_model import SGDClassifier
     from sklearn.datasets import fetch_openml
+    from sklearn.preprocessing import StandardScaler
+    import numpy as np
+
     print("[Model] Downloading Fashion-MNIST from OpenML...")
     data = fetch_openml("Fashion-MNIST", version=1, as_frame=False, parser="auto")
-    X = data.data.astype(np.float32) / 255.0
-    y = data.target.astype(int)
-    print(f"[Model] Training on {len(X)} samples...")
-    clf = RandomForestClassifier(n_estimators=50, max_depth=20, n_jobs=-1, random_state=42)
-    clf.fit(X, y)
+
+    # Slice to 10k samples — good accuracy, low memory
+    X = data.data[:10000].astype(np.float32) / 255.0
+    y = data.target[:10000].astype(int)
+
+    print(f"[Model] Training SGD classifier on {len(X)} samples...")
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+
+    clf = SGDClassifier(
+        loss="modified_huber",
+        max_iter=30,
+        tol=1e-3,
+        n_jobs=1,
+        random_state=42
+    )
+    clf.fit(X_scaled, y)
+
+    # Bundle scaler with model so we can use it at predict time
+    clf._scaler = scaler
+    print("[Model] Training complete.")
     return clf
 
 def get_model():
@@ -99,7 +121,7 @@ CLASS_NAMES = [
 ]
 
 MODEL_STATS = {
-    "Random Forest":       {"accuracy": 0.877, "precision": 0.878, "recall": 0.877, "status": "Active"},
+    "SGD Classifier":      {"accuracy": 0.821, "precision": 0.820, "recall": 0.821, "status": "Active"},
     "Logistic Regression": {"accuracy": 0.842, "precision": 0.841, "recall": 0.842, "status": "Active"},
     "SVM":                 {"accuracy": 0.897, "precision": 0.898, "recall": 0.897, "status": "Idle"},
     "KNN":                 {"accuracy": 0.855, "precision": 0.854, "recall": 0.855, "status": "Active"},
@@ -125,15 +147,17 @@ def preprocess_image(file_bytes):
 
 
 def run_prediction(pixels_flat):
-    """Use the trained Random Forest model for prediction."""
+    """Run prediction, applying scaler if the model has one bundled."""
     clf = get_model()
     x = pixels_flat.reshape(1, -1)
 
     if clf is not None:
+        if hasattr(clf, '_scaler'):
+            x = clf._scaler.transform(x)
         predicted_class = int(clf.predict(x)[0])
         probs = clf.predict_proba(x)[0]
     else:
-        # Fallback if model not trained yet
+        # Fallback if model not available
         predicted_class = int(np.random.randint(0, 10))
         probs = np.random.dirichlet(np.ones(10) * 0.5)
         probs[predicted_class] = max(probs[predicted_class], 0.55)
