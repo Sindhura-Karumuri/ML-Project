@@ -231,6 +231,11 @@ def predict_upload():
         return jsonify({"success": False, "message": f"Failed to process image: {str(e)}"}), 500
 
 
+@app.route("/api/ping", methods=["GET"])
+def ping():
+    return jsonify({"ok": True})
+
+
 @app.route("/api/classes", methods=["GET"])
 def get_classes():
     return jsonify(CLASS_NAMES)

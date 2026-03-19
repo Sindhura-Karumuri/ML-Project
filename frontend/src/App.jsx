@@ -1,4 +1,5 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { useEffect } from 'react'
 import { ThemeProvider } from './context/ThemeContext'
 import { AuthProvider } from './context/AuthContext'
 import { ToastProvider } from './context/ToastContext'
@@ -13,8 +14,11 @@ import About from './pages/About'
 import SignIn from './pages/SignIn'
 import SignUp from './pages/SignUp'
 import History from './pages/History'
+import { pingBackend } from './api'
 
 export default function App() {
+  useEffect(() => { pingBackend() }, [])
+
   return (
     <ThemeProvider>
       <AuthProvider>
