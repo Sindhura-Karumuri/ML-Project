@@ -10,7 +10,21 @@ from PIL import Image
 import hashlib
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, origins="*", supports_credentials=False)
+
+# Ensure CORS headers are present even on error responses
+@app.after_request
+def add_cors_headers(response):
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    return response
+
+@app.errorhandler(Exception)
+def handle_exception(e):
+    import traceback
+    traceback.print_exc()
+    return jsonify({"success": False, "message": str(e)}), 500
 
 # ── Paths (all relative to this file so they work on any server) ──
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -26,15 +40,19 @@ def get_model():
     global _clf
     if _clf is None:
         if os.path.exists(MODEL_PATH):
+            print("[Model] Loading model.pkl...")
             with open(MODEL_PATH, "rb") as f:
                 _clf = pickle.load(f)
         else:
-            # Auto-train on first run (e.g. on Render where model.pkl isn't committed)
             print("[Model] model.pkl not found — training now, this takes ~60s...")
-            _clf = _train_model()
-            with open(MODEL_PATH, "wb") as f:
-                pickle.dump(_clf, f)
-            print("[Model] Training complete, model saved.")
+            try:
+                _clf = _train_model()
+                with open(MODEL_PATH, "wb") as f:
+                    pickle.dump(_clf, f)
+                print("[Model] Training complete, model saved.")
+            except Exception as e:
+                print(f"[Model] Training failed: {e} — using random fallback.")
+                _clf = None
     return _clf
 
 
@@ -42,9 +60,11 @@ def _train_model():
     """Train a lightweight Random Forest on Fashion MNIST via OpenML."""
     from sklearn.ensemble import RandomForestClassifier
     from sklearn.datasets import fetch_openml
+    print("[Model] Downloading Fashion-MNIST from OpenML...")
     data = fetch_openml("Fashion-MNIST", version=1, as_frame=False, parser="auto")
     X = data.data.astype(np.float32) / 255.0
     y = data.target.astype(int)
+    print(f"[Model] Training on {len(X)} samples...")
     clf = RandomForestClassifier(n_estimators=50, max_depth=20, n_jobs=-1, random_state=42)
     clf.fit(X, y)
     return clf
