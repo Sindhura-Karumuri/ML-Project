@@ -46,36 +46,56 @@ _clf = None
 
 def _train_model():
     """
-    Train a memory-efficient model on Fashion MNIST.
-    Uses SGDClassifier which trains sample-by-sample — stays well under 512MB.
+    Train a memory-efficient SGD classifier on Fashion MNIST.
+    Downloads raw gz files directly — avoids OpenML's full in-memory load.
     """
+    import urllib.request
+    import gzip
     from sklearn.linear_model import SGDClassifier
-    from sklearn.datasets import fetch_openml
     from sklearn.preprocessing import StandardScaler
-    import numpy as np
 
-    print("[Model] Downloading Fashion-MNIST from OpenML...")
-    data = fetch_openml("Fashion-MNIST", version=1, as_frame=False, parser="auto")
+    base = "http://fashion-mnist.s3-website.eu-west-1.amazonaws.com/"
+    files = {
+        "X_train": "train-images-idx3-ubyte.gz",
+        "y_train": "train-labels-idx1-ubyte.gz",
+    }
 
-    # Slice to 10k samples — good accuracy, low memory
-    X = data.data[:10000].astype(np.float32) / 255.0
-    y = data.target[:10000].astype(int)
+    def load_images(path):
+        with gzip.open(path, 'rb') as f:
+            f.read(16)  # skip header
+            return np.frombuffer(f.read(), dtype=np.uint8).reshape(-1, 784).astype(np.float32) / 255.0
 
-    print(f"[Model] Training SGD classifier on {len(X)} samples...")
+    def load_labels(path):
+        with gzip.open(path, 'rb') as f:
+            f.read(8)  # skip header
+            return np.frombuffer(f.read(), dtype=np.uint8).astype(int)
+
+    print("[Model] Downloading Fashion-MNIST raw files...")
+    for key, fname in files.items():
+        dest = os.path.join(BASE_DIR, fname)
+        if not os.path.exists(dest):
+            urllib.request.urlretrieve(base + fname, dest)
+
+    X = load_images(os.path.join(BASE_DIR, files["X_train"]))
+    y = load_labels(os.path.join(BASE_DIR, files["y_train"]))
+
+    # 10k samples — good accuracy, stays well under 512MB
+    X, y = X[:10000], y[:10000]
+    print(f"[Model] Training SGD on {len(X)} samples...")
+
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
 
-    clf = SGDClassifier(
-        loss="modified_huber",
-        max_iter=30,
-        tol=1e-3,
-        n_jobs=1,
-        random_state=42
-    )
+    clf = SGDClassifier(loss="modified_huber", max_iter=30, n_jobs=1, random_state=42)
     clf.fit(X_scaled, y)
-
-    # Bundle scaler with model so we can use it at predict time
     clf._scaler = scaler
+
+    # Clean up downloaded gz files to save disk space
+    for fname in files.values():
+        dest = os.path.join(BASE_DIR, fname)
+        if os.path.exists(dest):
+            os.remove(dest)
+
     print("[Model] Training complete.")
     return clf
 
